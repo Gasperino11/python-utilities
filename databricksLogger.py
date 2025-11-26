@@ -28,7 +28,7 @@ class databricksLogger:
             self._validate_format_string(config)
             self.config = config
         else:
-            self.config = '[{asctime}][{envr}]:{message}'
+            self.config = '[{timestamp}][{envr}]:{message}'
         
         # Set timestamp format - use Python's strftime format
         if timestamp_fmt is not None:
@@ -46,7 +46,7 @@ class databricksLogger:
         Raises:
             ValueError: If the format string doesn't contain at least one required placeholder
         """
-        required_placeholders = ['{asctime}', '{message}', '{level}', '{envr}']
+        required_placeholders = ['{timestamp}', '{message}', '{level}', '{envr}']
         
         if not any(placeholder in format_string for placeholder in required_placeholders):
             raise ValueError(
@@ -65,11 +65,11 @@ class databricksLogger:
             The formatted and colored message
         """
         # Get current timestamp
-        asctime = datetime.now().strftime(self.timestamp_fmt)
+        timestamp = datetime.now().strftime(self.timestamp_fmt)
         
         # Format the message using the configured format string
         formatted = self.config.format(
-            asctime=asctime,
+            timestamp=timestamp,
             message=message,
             level=level,
             envr=self.envr
