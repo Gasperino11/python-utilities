@@ -32,7 +32,7 @@ class databricksLogger:
             self.config = config
         else:
             if envr.lower() in ['dev', 'development', 'test', 'testing']:
-                self.config = '[{timestamp}] <{envr}> :: {message}'
+                self.config = '[{timestamp}] <{envr}> : {message}'
             else: 
                 self.config = '[{timestamp}] : {message}'
 
