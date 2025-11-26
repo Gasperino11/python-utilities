@@ -1,8 +1,8 @@
 import os
-import logging
-from typing import Optional
-from datetime import datetime
 import pytz
+import logging
+from datetime import datetime
+from typing import Any, Optional
 
 class databricksLogger:
     # ANSI Color Codes
@@ -19,6 +19,7 @@ class databricksLogger:
         self,
         envr: str,
         config: Optional[str] = None,
+        custom_config_values: Optional[dict[str, Any]] = None,
         timestamp_fmt: Optional[str] = None,
         timezone: Optional[str] = None
     ):
@@ -30,7 +31,16 @@ class databricksLogger:
             self._validate_format_string(config)
             self.config = config
         else:
-            self.config = '[{timestamp}][{envr}]:{message}'
+            if envr.lower() in ['dev', 'development', 'test', 'testing']:
+                self.config = '[{timestamp}] <{envr}> :: {message}'
+            else: 
+                self.config = '[{timestamp}] : {message}'
+
+        # Set custom dictionary for additional user-defined values in logging message
+        if custom_config_values is not None:
+            self.custom_config_values = custom_config_values
+        else:
+            self.custom_config_values = {}  
         
         # Set timestamp format - use Python's strftime format
         if timestamp_fmt is not None:
@@ -80,7 +90,8 @@ class databricksLogger:
             timestamp=timestamp,
             message=message,
             level=level,
-            envr=self.envr
+            envr=self.envr,
+            **(self.custom_config_values or {})
         )
         
         # Apply color
