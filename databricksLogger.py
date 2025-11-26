@@ -2,6 +2,7 @@ import os
 import logging
 from typing import Optional
 from datetime import datetime
+import pytz
 
 class databricksLogger:
     # ANSI Color Codes
@@ -18,7 +19,8 @@ class databricksLogger:
         self,
         envr: str,
         config: Optional[str] = None,
-        timestamp_fmt: Optional[str] = None
+        timestamp_fmt: Optional[str] = None,
+        timezone: Optional[str] = None
     ):
         self.envr = envr
         
@@ -35,6 +37,12 @@ class databricksLogger:
             self.timestamp_fmt = timestamp_fmt
         else:
             self.timestamp_fmt = "%Y-%m-%d %H:%M:%S"
+        
+        # Set timezone - default to America/Chicago (CST)
+        if timezone is not None:
+            self.timezone = pytz.timezone(timezone)
+        else:
+            self.timezone = pytz.timezone('America/Chicago')
     
     def _validate_format_string(self, format_string: str) -> None:
         """
@@ -64,8 +72,8 @@ class databricksLogger:
         Returns:
             The formatted and colored message
         """
-        # Get current timestamp
-        timestamp = datetime.now().strftime(self.timestamp_fmt)
+        # Get current timestamp in configured timezone
+        timestamp = datetime.now(self.timezone).strftime(self.timestamp_fmt)
         
         # Format the message using the configured format string
         formatted = self.config.format(
