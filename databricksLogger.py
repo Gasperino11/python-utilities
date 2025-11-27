@@ -3,6 +3,7 @@ import pytz
 import logging
 from datetime import datetime
 from typing import Any, Optional
+from databricks.sdk.runtime import spark, display, dbutils
 
 class databricksLogger:
     """
@@ -131,6 +132,9 @@ class databricksLogger:
             self.timezone = pytz.timezone(timezone)
         else:
             self.timezone = pytz.timezone('America/Chicago')
+
+        self.caching = False
+        self.cached_logs = []
     
     def _validate_format_string(self, format_string: str) -> None:
         """
@@ -162,7 +166,7 @@ class databricksLogger:
                 f"Format string must contain at least one of: {', '.join(required_placeholders)}"
             )
     
-    def _format_message(self, message: str, level: str) -> str:
+    def _format_message(self, message: str, level: str, cache_message: bool = False) -> str:
         """
         Format the message with timestamp and color based on the configured format.
         
@@ -193,6 +197,16 @@ class databricksLogger:
             envr=self.envr,
             **(self.custom_config_values or {})
         )
+
+        if self.caching and cache_message:
+            log_entry = {
+                "job_run_id": self.job_run_id,
+                "timestamp": timestamp,
+                "level": level,
+                "envr": self.envr,
+                "message": message
+            }
+            self.cached_logs.append(log_entry)
         
         # Apply color
         color = self.COLORS.get(level, '')
@@ -200,185 +214,216 @@ class databricksLogger:
         
         return f"{color}{formatted}{reset}"
     
-    def info(self, message: str) -> None:
+    def info(self, message: str, cache_message: bool = False) -> None:
         """
         Log an informational message.
         
         Outputs an info-level message with the configured format and no color coding.
+        Optionally caches the message for later persistence to a Unity Catalog table.
         
         **Parameters:**
             message (str): The message to log
+            cache_message (bool): If True, adds this message to the cache for later persistence.
+                Defaults to False. Caching must be initialized via `init_caching()` first.
+        
+        **Raises:**
+            Warning: If cache_message=True but caching is not initialized, logs a warning
         
         **Example:**
             ```python
             logger.info("User logged in successfully")
+            logger.info("Processing started", cache_message=True)
             ```
         """
-        colored_message = self._format_message(message, 'INFO')
+        colored_message = self._format_message(message, 'INFO', cache_message=cache_message)
         print(colored_message)
     
-    def warning(self, message: str) -> None:
+    def warning(self, message: str, cache_message: bool = False) -> None:
         """
         Log a warning message.
         
         Outputs a warning-level message in yellow (ANSI color code).
         Use for potentially problematic situations that don't prevent execution.
+        Optionally caches the message for later persistence to a Unity Catalog table.
         
         **Parameters:**
             message (str): The message to log
+            cache_message (bool): If True, adds this message to the cache for later persistence.
+                Defaults to False. Caching must be initialized via `init_caching()` first.
         
         **Example:**
             ```python
             logger.warning("Cache miss for key: user_12345")
+            logger.warning("Low memory detected", cache_message=True)
             ```
         """
-        colored_message = self._format_message(message, 'WARNING')
+        colored_message = self._format_message(message, 'WARNING', cache_message=cache_message)
         print(colored_message)
     
-    def error(self, message: str) -> None:
+    def error(self, message: str, cache_message: bool = False) -> None:
         """
         Log an error message.
         
         Outputs an error-level message in red (ANSI color code).
         Use for serious problems that may prevent normal operation.
+        Optionally caches the message for later persistence to a Unity Catalog table.
         
         **Parameters:**
             message (str): The message to log
+            cache_message (bool): If True, adds this message to the cache for later persistence.
+                Defaults to False. Caching must be initialized via `init_caching()` first.
         
         **Example:**
             ```python
             logger.error("Database connection failed: timeout after 30s")
+            logger.error("Processing failed with error code 500", cache_message=True)
             ```
         """
-        colored_message = self._format_message(message, 'ERROR')
+        colored_message = self._format_message(message, 'ERROR', cache_message=cache_message)
         print(colored_message)
     
-    def critical(self, message: str) -> None:
+    def critical(self, message: str, cache_message: bool = False) -> None:
         """
         Log a critical message.
         
         Outputs a critical-level message in purple (ANSI color code).
         Use for critical errors that require immediate attention.
+        Optionally caches the message for later persistence to a Unity Catalog table.
         
         **Parameters:**
             message (str): The message to log
+            cache_message (bool): If True, adds this message to the cache for later persistence.
+                Defaults to False. Caching must be initialized via `init_caching()` first.
         
         **Example:**
             ```python
             logger.critical("System disk space critically low: 5% remaining")
+            logger.critical("Database unavailable", cache_message=True)
             ```
         """
-        colored_message = self._format_message(message, 'CRITICAL')
+        colored_message = self._format_message(message, 'CRITICAL', cache_message=cache_message)
         print(colored_message)
     
-    def success(self, message: str) -> None:
+    def success(self, message: str, cache_message: bool = False) -> None:
         """
         Log a success message.
         
         Outputs a success-level message in green (ANSI color code).
         Custom log level useful for highlighting successful operations or milestones.
+        Optionally caches the message for later persistence to a Unity Catalog table.
         
         **Parameters:**
             message (str): The message to log
+            cache_message (bool): If True, adds this message to the cache for later persistence.
+                Defaults to False. Caching must be initialized via `init_caching()` first.
         
         **Example:**
             ```python
             logger.success("Data pipeline completed: 50,000 records processed")
+            logger.success("Job finished successfully", cache_message=True)
             ```
         """
-        colored_message = self._format_message(message, 'SUCCESS')
+        colored_message = self._format_message(message, 'SUCCESS', cache_message=cache_message)
         print(colored_message)
-    
-    @staticmethod
-    def display_table(data: list, headers: Optional[list[str]] = None) -> None:
+
+    def init_caching(self, uc_table_name: str) -> None:
         """
-        Display data as a markdown table in a Databricks cell.
+        Initialize log message caching for persistence to a Unity Catalog table.
         
-        This static method formats user-provided data as a markdown table and displays it
-        using Databricks' `display()` function. Supports both list of dictionaries and 
-        list of lists as input formats.
+        This method must be called before using the `cache_message=True` parameter in any logging method.
+        It validates that the target table exists, retrieves the Databricks job run ID, and prepares
+        the cache for storing log entries.
         
         **Parameters:**
-            data (list): The data to display. Can be one of:
-                - List of dictionaries: `[{'name': 'Alice', 'age': 30}, {'name': 'Bob', 'age': 25}]`
-                - List of lists: `[['Alice', 30], ['Bob', 25]]`
-            headers (Optional[list[str]]): Column headers for the table. 
-                Required when data is a list of lists.
-                Optional when data is a list of dictionaries (will use dict keys as headers).
-                If provided with dict data, these headers will be used instead of the keys.
+            uc_table_name (str): The fully qualified Unity Catalog table name where logs will be persisted.
+                Format: `<catalog>.<schema>.<table>` (e.g., `main.logs.job_logs`)
+                The table must already exist and should have columns: job_run_id, envr, log_timestamp, level, message
         
         **Raises:**
-            ValueError: If data is empty
-            ValueError: If headers are required but not provided
-            ValueError: If headers length doesn't match data row length
-            TypeError: If data format is not supported (must be list of dicts or list of lists)
+            ValueError: If the specified table does not exist in the catalog
+            ValueError: If job run ID cannot be determined from notebook context or job parameters
+        
+        **Side Effects:**
+            - Sets `self.caching = True` if successful
+            - Initializes `self.cached_logs = []` as an empty list
+            - Retrieves and stores the Databricks job run ID in `self.job_run_id`
+            - Stores reference to Spark session in `self.spark`
         
         **Example:**
             ```python
-            # Using list of dictionaries
-            employees = [
-                {'name': 'Alice', 'department': 'Engineering', 'salary': 120000},
-                {'name': 'Bob', 'department': 'Sales', 'salary': 90000},
-                {'name': 'Charlie', 'department': 'Engineering', 'salary': 115000}
-            ]
-            databricksLogger.display_table(employees)
+            logger = databricksLogger(envr="prod")
             
-            # Using list of lists with headers
-            data = [
-                ['Product A', 1500, 45],
-                ['Product B', 2300, 32],
-                ['Product C', 1800, 58]
-            ]
-            headers = ['Product', 'Revenue', 'Units Sold']
-            databricksLogger.display_table(data, headers=headers)
+            # Initialize caching with the target table
+            logger.init_caching("main.logs.job_logs")
             
-            # Using list of lists, overriding dict keys
-            employees = [
-                {'name': 'Alice', 'department': 'Engineering'},
-                {'name': 'Bob', 'department': 'Sales'}
-            ]
-            custom_headers = ['Employee Name', 'Dept']
-            databricksLogger.display_table(employees, headers=custom_headers)
+            # Now log messages with caching enabled
+            logger.info("Starting data processing", cache_message=True)
+            logger.warning("Encountered retry scenario", cache_message=True)
+            
+            # Persist all cached logs to the table
+            logger.persist_cache()
             ```
         """
-        if not data:
-            raise ValueError("Data cannot be empty")
-        
-        # Determine if data is list of dicts or list of lists
-        is_dict_data = isinstance(data[0], dict)
-        
-        if is_dict_data:
-            # Extract headers from dict keys if not provided
-            if headers is None:
-                headers = list(data[0].keys())
+
+        if not spark.catalog.tableExists(uc_table_name):
+            raise ValueError(f"Table '{uc_table_name}' does not exist in the catalog.")
+
+        self.uc_table_name = uc_table_name
+        self.caching = True
+        self.spark = spark
             
-            # Validate headers match dict keys
-            if len(headers) != len(data[0]):
-                raise ValueError(f"Headers length ({len(headers)}) doesn't match data keys ({len(data[0])})")
-            
-            # Convert dicts to list of lists using headers
-            rows = [[row.get(header, '') for header in headers] for row in data]
+        try:
+            self.info("Retrieving job run ID from Databricks notebook context.")
+            self.job_run_id = dbutils.notebook.entry_point.getDbutils().notebook().getContext().jobId().get()
+        except:
+            self.warning("Unable to retrieve job run ID via Databricks notebook context, trying job parameters.")
+            self.job_run_id = dbutils.widgets.getAll().get("job_id", None)
+            if self.job_run_id is None:
+                self.caching = False
+                raise ValueError("Job run ID could not be determined from notebook context or fetched from job parameters; caching disabled.")
+
+    def persist_cache(self) -> None:
+        """
+        Persist all cached log messages to the Unity Catalog table.
         
-        elif isinstance(data[0], (list, tuple)):
-            # List of lists/tuples
-            if headers is None:
-                raise ValueError("Headers are required when data is a list of lists")
-            
-            rows = data
-            
-            # Validate headers match row length
-            if len(headers) != len(rows[0]):
-                raise ValueError(f"Headers length ({len(headers)}) doesn't match row length ({len(rows[0])})")
+        This method writes all cached log entries (accumulated via `cache_message=True` in logging methods)
+        to the target Unity Catalog table specified in `init_caching()`. Uses Spark's append mode with
+        schema merging to ensure compatibility.
         
+        **Raises:**
+            ValueError: If caching has not been initialized via `init_caching()`
+            PySpark exceptions: If the write operation fails (table permissions, data format, etc.)
+        
+        **Side Effects:**
+            - Writes cached log entries to the Unity Catalog table
+            - Clears `self.cached_logs` after successful persistence
+            - Logs info and warning messages about the persistence operation
+        
+        **Returns:**
+            None
+        
+        **Example:**
+            ```python
+            logger = databricksLogger(envr="prod")
+            logger.init_caching("main.logs.job_logs")
+            
+            # Log messages throughout execution
+            logger.info("Step 1 completed", cache_message=True)
+            logger.info("Step 2 completed", cache_message=True)
+            logger.warning("Minor issue encountered", cache_message=True)
+            
+            # Persist all cached logs at the end
+            logger.persist_cache()
+            ```
+        """
+        if not self.caching:
+            raise ValueError("Caching is not enabled. Call 'init_caching' first.")
+            
+        if len(self.cached_logs) == 0:
+            self.critical("No cached logs to persist.")
         else:
-            raise TypeError(f"Data must be a list of dicts or list of lists, got {type(data[0])}")
-        
-        # Build markdown table
-        markdown_table = "| " + " | ".join(str(h) for h in headers) + " |\n"
-        markdown_table += "|" + "|".join(["---"] * len(headers)) + "|\n"
-        
-        for row in rows:
-            markdown_table += "| " + " | ".join(str(cell) for cell in row) + " |\n"
-        
-        # Display using Databricks display function
-        display(markdown_table)
+            self.info(f"Persisting {len(self.cached_logs)} cached log entries to table '{self.uc_table_name}'.")
+            df = self.spark.createDataFrame(self.cached_logs)
+            df.write.mode("append").option("mergeSchema", "true").saveAsTable(self.uc_table_name)
+            self.info("Cached logs persisted successfully; flushing current cache.")
+            self.cached_logs = []
