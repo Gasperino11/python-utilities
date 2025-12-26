@@ -380,7 +380,7 @@ class databricksLogger:
             self.job_run_id = dbutils.widgets.getAll().get("job_id", None)
             if self.job_run_id is None:
                 self.caching = False
-                raise ValueError("Job run ID could not be determined from notebook context or fetched from job parameters; caching disabled.")
+                self.critical("Job run ID could not be determined from notebook context or fetched from job parameters; caching disabled.")
 
     def persist_cache(self) -> None:
         """
@@ -418,7 +418,7 @@ class databricksLogger:
         """
         if not self.caching:
             raise ValueError("Caching is not enabled. Call 'init_caching' first.")
-            
+
         if len(self.cached_logs) == 0:
             self.critical("No cached logs to persist.")
         else:
